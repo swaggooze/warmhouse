@@ -1,0 +1,28 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Notification Service
+
+ContainerQueue(q_events, "События устройств", "RabbitMQ exchange")
+Container(account, "Account & Home Service", "Go", "Пользователи дома и их контакты")
+System_Ext(notify_ext, "Провайдеры уведомлений", "Push, SMS, e-mail")
+
+Container_Boundary(notification, "Notification Service") {
+    Component(consumer, "Обработчик событий", "Go, AMQP-клиент", "Получает события устройств")
+    Component(filter, "Отбор событий", "Go", "Выбирает события, о которых нужно сообщить: устройство не на связи, команда не выполнена, ворота открыты")
+    Component(recipients, "Получатели", "Go, HTTP-клиент", "Пользователи дома, их контакты и выбранные каналы")
+    Component(templates, "Шаблоны", "Go", "Текст уведомления по типу события")
+    Component(sender, "Отправка", "Go", "Адаптеры каналов push, SMS, e-mail; повтор при ошибке")
+}
+
+Rel_D(q_events, consumer, "События", "AMQP")
+Rel_R(consumer, filter, "Событие")
+Rel_D(filter, recipients, "Дом события")
+Rel_R(filter, templates, "Тип события")
+Rel_D(templates, sender, "Текст уведомления")
+Rel_R(recipients, sender, "Получатели и каналы")
+Rel_D(recipients, account, "Пользователи и контакты дома", "REST/JSON")
+Rel_D(sender, notify_ext, "Уведомления", "HTTPS")
+
+SHOW_LEGEND()
+@enduml

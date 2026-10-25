@@ -1,0 +1,83 @@
+@startuml
+title Тёплый дом - последовательность "команда устройству" (включение котла)
+
+autonumber
+skinparam responseMessageBelowArrow true
+
+box "Heating Service"
+    participant "Терморегулятор" as thermostat
+    participant "DeviceClient" as heating_client
+end box
+
+box "Device Service"
+    participant "CommandHandler\n(REST API)" as api
+    participant "CommandService" as commands
+    participant "DeviceRepository" as repo
+    participant "EventPublisher" as publisher
+    participant "EventConsumer" as consumer
+    participant "StateManager" as state
+end box
+
+queue "RabbitMQ\nexchange\ndevice.commands" as q_commands
+queue "RabbitMQ\nexchange\ndevice.events" as q_events
+
+box "Device Gateway"
+    participant "CommandConsumer" as gw_consumer
+    participant "ProtocolAdapter" as adapter
+    participant "MQTTClient" as mqtt_client
+    participant "MessageRouter" as router
+    participant "EventPublisher" as gw_publisher
+end box
+
+queue "EMQX\n(MQTT)" as mqtt
+participant "Реле котла" as relay
+
+== Отправка команды ==
+
+thermostat -> thermostat : temp < target - hysteresis
+thermostat -> heating_client : SwitchBoiler(zoneID, on=true)
+heating_client -> api : POST /devices/{id}/commands\n{"capability":"switch","value":"on"}\nIdempotency-Key: <uuid>
+api -> commands : Submit(deviceID, Command)
+commands -> repo : FindDeviceWithType(deviceID)
+repo --> commands : Device, DeviceType
+commands -> commands : проверка: тип поддерживает "switch"
+commands -> repo : SaveCommand(status=PENDING)\nSetDesiredState(on)
+commands -> publisher : PublishCommand(cmd)
+publisher -> q_commands : command{commandId, deviceId, capability, value}
+commands --> api : commandId
+api --> heating_client : 202 Accepted {"commandId": "...", "status": "PENDING"}
+heating_client --> thermostat : commandId
+
+== Доставка на устройство ==
+
+q_commands -> gw_consumer : command
+gw_consumer -> adapter : Encode(cmd)
+note right of adapter : формат производителя\nвыбирается по типу устройства
+adapter -> mqtt_client : Publish(devices/{id}/cmd, payload)
+mqtt_client -> mqtt : PUBLISH QoS 1
+mqtt -> relay : PUBLISH devices/{id}/cmd
+
+alt устройство на связи
+    relay -> relay : включает котёл
+    relay -> mqtt : PUBLISH devices/{id}/state {"on": true, "cmd": "<commandId>"}
+    mqtt -> mqtt_client : state
+    mqtt_client -> router : Route(topic, payload)
+    router -> adapter : Decode(deviceType, payload)
+    adapter -> gw_publisher : PublishState(DeviceState, Ack(commandId))
+    gw_publisher -> q_events : state{deviceId, on=true, commandId}
+
+    == Подтверждение ==
+
+    q_events -> consumer : state
+    consumer -> state : Apply(state)
+    state -> repo : SetActualState(on)\nUpdateCommand(status=DONE)
+    note right of state : желаемое = фактическое,\nкоманда выполнена
+else нет ответа за 30 секунд
+    state -> state : проверка тайм-аутов по расписанию
+    state -> repo : UpdateCommand(status=FAILED)
+    state -> publisher : PublishCommandFailed(commandId)
+    publisher -> q_events : commandFailed{commandId, deviceId}
+    note right of q_events : событие получает Notification Service\nи сообщает пользователю
+end
+
+@enduml

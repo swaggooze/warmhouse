@@ -1,0 +1,35 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Heating Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+Container(device, "Device Service", "Go", "Команды устройствам")
+ContainerQueue(q_measurements, "Измерения", "RabbitMQ exchange")
+ContainerDb(heating_db, "Heating DB", "PostgreSQL", "Зоны отопления, настройки, расписания")
+
+Container_Boundary(heating, "Heating Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /houses/{id}/heating: режим, целевая температура, расписание")
+    Component(settings, "Настройки отопления", "Go", "Зоны отопления: датчик температуры и реле котла, режим, целевая температура, гистерезис")
+    Component(scheduler, "Планировщик", "Go, планировщик", "По расписанию меняет целевую температуру зоны")
+    Component(consumer, "Обработчик измерений", "Go, AMQP-клиент", "Получает измерения температуры по датчикам зон")
+    Component(thermostat, "Терморегулятор", "Go", "Сравнивает температуру с целевой с учётом гистерезиса и решает, включить или выключить котёл")
+    Component(device_client, "Клиент Device Service", "Go, HTTP-клиент", "Отправляет команды реле котла")
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Heating DB")
+}
+
+Rel_D(api_gw, api, "Настройки отопления", "REST/JSON")
+Rel_D(api, settings, "Изменение настроек")
+Rel_D(settings, repo, "Читает и пишет")
+Rel_R(scheduler, settings, "Целевая температура по расписанию")
+
+Rel_U(q_measurements, consumer, "Доставляет измерения", "AMQP")
+Rel_U(consumer, thermostat, "Температура в зоне")
+Rel_L(thermostat, settings, "Целевая температура, режим")
+Rel_R(thermostat, device_client, "Включить / выключить котёл")
+Rel_U(device_client, device, "Команда реле", "REST/JSON")
+
+Rel_D(repo, heating_db, "", "SQL")
+
+SHOW_LEGEND()
+@enduml

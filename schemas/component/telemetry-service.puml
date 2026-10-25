@@ -1,0 +1,36 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Telemetry Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+Container(scenario, "Scenario Service", "Go", "Проверка условий по истории")
+ContainerQueue(q_measurements, "Измерения", "RabbitMQ exchange")
+ContainerDb(telemetry_db, "Telemetry DB", "TimescaleDB", "Временные ряды измерений, агрегаты")
+
+Container_Boundary(telemetry, "Telemetry Service") {
+    Component(consumer, "Обработчик измерений", "Go, AMQP-клиент", "Получает измерения из брокера, подтверждает сообщения после записи")
+    Component(ingest, "Приём измерений", "Go", "Проверка и нормализация: единицы измерения, время, отбрасывание дублей")
+    Component(writer, "Пакетная запись", "Go", "Копит измерения и пишет их в БД пачками")
+
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /devices/{id}/telemetry/latest, /devices/{id}/telemetry?from=&to=&step=")
+    Component(query, "Сервис запросов", "Go", "Последние значения, история за период, агрегаты по шагу")
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Telemetry DB: hypertable измерений, непрерывные агрегаты")
+    Component(retention, "Политика хранения", "Go, планировщик", "Удаляет сырые данные старше срока хранения, агрегаты оставляет")
+}
+
+Rel_U(q_measurements, consumer, "Доставляет измерения", "AMQP")
+Rel_R(consumer, ingest, "Измерение")
+Rel_R(ingest, writer, "Проверенное измерение")
+Rel_D(writer, repo, "Пакет измерений")
+
+Rel_D(api_gw, api, "Текущие значения, история", "REST/JSON")
+Rel_D(scenario, api, "История для условий сценариев", "REST/JSON")
+Rel_D(api, query, "Запрос данных")
+Rel_D(query, repo, "Читает")
+Rel_D(retention, repo, "Удаляет устаревшие данные")
+
+Rel_D(repo, telemetry_db, "", "SQL")
+
+SHOW_LEGEND()
+@enduml

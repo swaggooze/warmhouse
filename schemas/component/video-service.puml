@@ -1,0 +1,24 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Video Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+System_Ext(video_ext, "Внешний видеосервис", "Хранение и трансляция видео с камер")
+
+Container_Boundary(video, "Video Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /houses/{id}/cameras: список камер, ссылка на поток, записи")
+    Component(cameras, "Камеры дома", "Go", "Список камер дома и их состояние из аккаунта дома во внешнем видеосервисе")
+    Component(links, "Выдача ссылок", "Go", "Временные подписанные ссылки на живой поток и записи")
+    Component(video_client, "Клиент видеосервиса", "Go, HTTP-клиент", "Вызовы API внешнего видеосервиса")
+}
+
+Rel_D(api_gw, api, "Камеры и ссылки на потоки", "REST/JSON")
+Rel_D(api, cameras, "Список камер")
+Rel_D(api, links, "Ссылка на поток или запись")
+Rel_D(cameras, video_client, "Камеры аккаунта")
+Rel_D(links, video_client, "Выпуск ссылки")
+Rel_D(video_client, video_ext, "Камеры, потоки, записи", "HTTPS, REST API")
+
+SHOW_LEGEND()
+@enduml

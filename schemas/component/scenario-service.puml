@@ -1,0 +1,44 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Scenario Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+Container(device, "Device Service", "Go", "Команды устройствам")
+Container(telemetry, "Telemetry Service", "Go", "История измерений")
+ContainerQueue(q_measurements, "Измерения", "RabbitMQ exchange")
+ContainerQueue(q_events, "События устройств", "RabbitMQ exchange")
+ContainerDb(scenario_db, "Scenario DB", "PostgreSQL", "Сценарии и журнал срабатываний")
+
+Container_Boundary(scenario, "Scenario Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /houses/{id}/scenarios: создание, изменение, включение, журнал")
+    Component(editor, "Редактор сценариев", "Go", "Проверяет сценарий: триггер, условия, действия ссылаются на устройства дома")
+    Component(consumer, "Обработчик событий", "Go, AMQP-клиент", "Получает измерения и события устройств")
+    Component(scheduler, "Планировщик", "Go, планировщик", "Триггеры по времени и расписанию")
+    Component(engine, "Движок правил", "Go", "Находит сценарии по триггеру, проверяет условия, запускает действия")
+    Component(actions, "Исполнитель действий", "Go", "Выполняет действия сценария, пишет журнал срабатываний")
+    Component(device_client, "Клиент Device Service", "Go, HTTP-клиент", "Команды устройствам")
+    Component(telemetry_client, "Клиент Telemetry Service", "Go, HTTP-клиент", "История для условий вида: средняя температура за час")
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Scenario DB")
+}
+
+Rel_D(api_gw, api, "Сценарии", "REST/JSON")
+Rel_D(api, editor, "Создание и изменение")
+Rel_D(editor, repo, "Читает и пишет")
+
+Rel_U(q_measurements, consumer, "Измерения", "AMQP")
+Rel_U(q_events, consumer, "События устройств", "AMQP")
+Rel_R(consumer, engine, "Триггер: событие")
+Rel_D(scheduler, engine, "Триггер: время")
+Rel_D(engine, repo, "Активные сценарии")
+Rel_R(engine, telemetry_client, "Данные для условий")
+Rel_D(engine, actions, "Действия сценария")
+Rel_R(actions, device_client, "Команды")
+Rel_D(actions, repo, "Журнал срабатываний")
+
+Rel_U(device_client, device, "Команда устройству", "REST/JSON")
+Rel_U(telemetry_client, telemetry, "История измерений", "REST/JSON")
+Rel_D(repo, scenario_db, "", "SQL")
+
+SHOW_LEGEND()
+@enduml

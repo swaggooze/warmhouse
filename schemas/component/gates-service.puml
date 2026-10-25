@@ -1,0 +1,28 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Gates Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+Container(device, "Device Service", "Go", "Команды и состояние устройств")
+ContainerDb(gates_db, "Gates DB", "PostgreSQL", "Ворота, журнал проездов")
+
+Container_Boundary(gates, "Gates Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /houses/{id}/gates: открыть, закрыть, журнал")
+    Component(control, "Управление воротами", "Go", "Перед командой проверяет состояние ворот и датчик препятствия; запрещает закрытие при препятствии")
+    Component(journal, "Журнал проездов", "Go", "Кто и когда открывал и закрывал ворота")
+    Component(device_client, "Клиент Device Service", "Go, HTTP-клиент", "Состояние ворот, команды приводу")
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Gates DB")
+}
+
+Rel_D(api_gw, api, "Управление воротами", "REST/JSON")
+Rel_D(api, control, "Открыть / закрыть")
+Rel_D(api, journal, "Просмотр журнала")
+Rel_R(control, journal, "Запись о действии")
+Rel_R(control, device_client, "Состояние, команда приводу")
+Rel_U(device_client, device, "Состояние и команды", "REST/JSON")
+Rel_D(journal, repo, "Читает и пишет")
+Rel_D(repo, gates_db, "", "SQL")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,32 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Account & Home Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя, проверка доступа")
+Container(notification, "Notification Service", "Go", "Получатели уведомлений")
+ContainerDb(account_db, "Account DB", "PostgreSQL", "Профили, дома, участники")
+
+Container_Boundary(account, "Account & Home Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /users/me, /houses, /houses/{id}/members, /access")
+    Component(profiles, "Профили", "Go", "Профиль пользователя по идентификатору из токена, контакты, каналы уведомлений")
+    Component(houses, "Дома", "Go", "Создание дома, адрес и регион")
+    Component(members, "Участники и роли", "Go", "Приглашение в дом, роли владелец / член семьи / гость")
+    Component(access, "Проверка доступа", "Go", "Есть ли у пользователя доступ к дому и с какой ролью")
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Account DB")
+}
+
+Rel_D(api_gw, api, "Профиль, дома, проверка доступа", "REST/JSON")
+Rel_D(notification, api, "Пользователи и контакты дома", "REST/JSON")
+Rel_D(api, profiles, "Профиль")
+Rel_D(api, houses, "Дома")
+Rel_D(api, members, "Участники")
+Rel_D(api, access, "Проверка доступа")
+Rel_D(profiles, repo, "Читает и пишет")
+Rel_D(houses, repo, "Читает и пишет")
+Rel_D(members, repo, "Читает и пишет")
+Rel_D(access, repo, "Читает")
+Rel_D(repo, account_db, "", "SQL")
+
+SHOW_LEGEND()
+@enduml
