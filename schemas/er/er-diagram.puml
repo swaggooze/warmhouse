@@ -1,0 +1,170 @@
+@startuml
+title Тёплый дом - ER-диаграмма (To-Be)
+
+hide circle
+skinparam linetype polyline
+
+' Сплошные связи - внешние ключи внутри одной БД.
+' Пунктирные связи - логические ссылки между БД разных сервисов, без внешнего ключа.
+
+package "Account DB (Account & Home Service)" {
+    entity User {
+        *id : uuid <<PK>>
+        --
+        *external_id : varchar <<UK>> -- sub из Keycloak
+        *email : varchar
+        phone : varchar
+        *full_name : varchar
+        notification_channels : varchar[]
+        *created_at : timestamptz
+    }
+
+    entity House {
+        *id : uuid <<PK>>
+        --
+        *owner_id : uuid <<FK>>
+        *name : varchar
+        *address : varchar
+        *region : varchar
+        *timezone : varchar
+        *created_at : timestamptz
+    }
+
+    entity HouseMember {
+        *house_id : uuid <<PK, FK>>
+        *user_id : uuid <<PK, FK>>
+        --
+        *role : varchar -- owner / family / guest
+        *added_at : timestamptz
+    }
+}
+
+package "Device DB (Device Service)" {
+    entity Module {
+        *id : uuid <<PK>>
+        --
+        *code : varchar <<UK>> -- heating / lighting / gates / video
+        *name : varchar
+        description : text
+    }
+
+    entity ModuleDeviceType {
+        *module_id : uuid <<PK, FK>>
+        *device_type_id : uuid <<PK, FK>>
+        --
+        *quantity : int -- состав комплекта
+    }
+
+    entity HouseModule {
+        *house_id : uuid <<PK>> -- ссылка на House
+        *module_id : uuid <<PK, FK>>
+        --
+        *status : varchar -- active / disabled
+        *connected_at : timestamptz
+    }
+
+    entity DeviceType {
+        *id : uuid <<PK>>
+        --
+        *code : varchar <<UK>>
+        *name : varchar
+        *manufacturer : varchar
+        *protocol : varchar -- mqtt-json, zigbee, ...
+        *capabilities : jsonb -- switch, level, temperature, ...
+    }
+
+    entity Device {
+        *id : uuid <<PK>>
+        --
+        *type_id : uuid <<FK>>
+        *house_id : uuid -- ссылка на House
+        module_id : uuid <<FK>>
+        *serial_number : varchar <<UK>>
+        *name : varchar
+        room : varchar
+        *status : varchar -- on / off / offline
+        *credentials_hash : varchar
+        connected_at : timestamptz
+        *created_at : timestamptz
+    }
+
+    entity DeviceState {
+        *device_id : uuid <<PK, FK>>
+        --
+        desired : jsonb
+        reported : jsonb
+        reported_at : timestamptz
+    }
+
+    entity Command {
+        *id : uuid <<PK>>
+        --
+        *device_id : uuid <<FK>>
+        *capability : varchar
+        *value : jsonb
+        *status : varchar -- pending / done / failed
+        *idempotency_key : varchar <<UK>>
+        *created_at : timestamptz
+        completed_at : timestamptz
+    }
+}
+
+package "Telemetry DB (Telemetry Service, TimescaleDB)" {
+    entity TelemetryData {
+        *device_id : uuid <<PK>> -- ссылка на Device
+        *metric : varchar <<PK>> -- temperature, humidity, ...
+        *time : timestamptz <<PK>>
+        --
+        *value : double
+        *unit : varchar
+    }
+}
+
+package "Heating DB (Heating Service)" {
+    entity HeatingZone {
+        *id : uuid <<PK>>
+        --
+        *house_id : uuid -- ссылка на House
+        *name : varchar
+        *sensor_device_id : uuid -- ссылка на Device
+        *relay_device_id : uuid -- ссылка на Device
+        *mode : varchar -- comfort / eco / off
+        *target_temp : numeric
+        *hysteresis : numeric
+    }
+
+    entity HeatingSchedule {
+        *id : uuid <<PK>>
+        --
+        *zone_id : uuid <<FK>>
+        *weekday : smallint
+        *start_time : time
+        *target_temp : numeric
+    }
+}
+
+' Внутри Account DB
+User ||--o{ House : владеет
+House ||--o{ HouseMember : участники
+User ||--o{ HouseMember : доступ к домам
+
+' Внутри Device DB
+Module ||--o{ ModuleDeviceType : состав комплекта
+DeviceType ||--o{ ModuleDeviceType
+Module ||--o{ HouseModule : подключён к домам
+DeviceType ||--o{ Device : тип
+Module |o--o{ Device : входит в модуль
+Device ||--|| DeviceState : состояние
+Device ||--o{ Command : команды
+
+' Внутри Heating DB
+HeatingZone ||--o{ HeatingSchedule : расписание
+
+' Логические ссылки между БД
+House ||..o{ HouseModule
+House ||..o{ Device : устройства дома
+House ||..o{ HeatingZone
+Device ||..o{ TelemetryData : измерения
+Device ||..o{ HeatingZone : датчик и реле зоны
+
+@enduml
