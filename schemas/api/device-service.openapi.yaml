@@ -1,0 +1,651 @@
+openapi: 3.0.3
+info:
+  title: Device Service API
+  version: 1.0.0
+  description: |
+    REST API сервиса управления устройствами "Тёплого дома".
+
+    Сервис ведёт каталог устройств дома, принимает команды и хранит желаемое и фактическое
+    состояние устройств. Команды выполняются асинхронно: сервис сразу отвечает `202 Accepted`
+    с идентификатором команды, а результат приходит от устройства через брокер событий.
+    Статус команды можно запросить отдельно.
+
+    Вызывающие: Web-приложение через API Gateway, сервисы Heating, Lighting, Gates, Scenario,
+    а также Device Gateway при подключении устройства.
+servers:
+  - url: https://api.warmhouse.example/device/v1
+    description: Через API Gateway
+  - url: http://device-service:8080/api/v1
+    description: Внутренний адрес для других сервисов
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: devices
+    description: Каталог устройств
+  - name: commands
+    description: Команды и состояние устройств
+
+paths:
+  /devices:
+    post:
+      tags: [devices]
+      operationId: registerDevice
+      summary: Подключить устройство к дому
+      description: |
+        Регистрирует устройство по серийному номеру и коду подключения из комплекта.
+        В ответе возвращаются учётные данные для подключения устройства к MQTT-брокеру;
+        повторно они не выдаются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistration'
+            examples:
+              thermostatSensor:
+                summary: Датчик температуры из модуля "Отопление"
+                value:
+                  houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+                  serialNumber: TS-2026-000123
+                  pairingCode: "482913"
+                  typeCode: temp-sensor-v2
+                  moduleCode: heating
+                  name: Датчик в гостиной
+                  room: Гостиная
+      responses:
+        '201':
+          description: Устройство зарегистрировано
+          headers:
+            Location:
+              description: Адрес созданного устройства
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceRegistered'
+              examples:
+                registered:
+                  value:
+                    device:
+                      id: 9d3c1a2e-7f4b-4d6a-8a51-2b7e0f9c4d11
+                      houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+                      type:
+                        code: temp-sensor-v2
+                        name: Датчик температуры v2
+                        capabilities: [temperature]
+                      moduleCode: heating
+                      serialNumber: TS-2026-000123
+                      name: Датчик в гостиной
+                      room: Гостиная
+                      status: offline
+                      connectedAt: null
+                      createdAt: '2026-10-25T10:15:00Z'
+                    mqtt:
+                      host: mqtt.warmhouse.example
+                      port: 8883
+                      clientId: 9d3c1a2e-7f4b-4d6a-8a51-2b7e0f9c4d11
+                      username: 9d3c1a2e-7f4b-4d6a-8a51-2b7e0f9c4d11
+                      password: Zk8q-2mVn-Lr7T-9xWp
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Устройство с таким серийным номером уже подключено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                alreadyRegistered:
+                  value:
+                    code: DEVICE_ALREADY_REGISTERED
+                    message: Устройство с серийным номером TS-2026-000123 уже подключено
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{deviceId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [devices]
+      operationId: getDevice
+      summary: Получить информацию об устройстве
+      description: Возвращает данные устройства, его тип с возможностями и текущее состояние.
+      responses:
+        '200':
+          description: Устройство найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceDetails'
+              examples:
+                boilerRelay:
+                  summary: Реле котла
+                  value:
+                    id: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+                    houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+                    type:
+                      code: boiler-relay-v1
+                      name: Реле котла v1
+                      capabilities: [switch]
+                    moduleCode: heating
+                    serialNumber: BR-2026-004512
+                    name: Реле котла
+                    room: Котельная
+                    status: 'on'
+                    connectedAt: '2026-10-20T08:00:00Z'
+                    createdAt: '2026-10-20T07:55:00Z'
+                    state:
+                      desired:
+                        switch: 'on'
+                      reported:
+                        switch: 'on'
+                      reportedAt: '2026-10-25T10:20:31Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{deviceId}/state:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    put:
+      tags: [commands]
+      operationId: updateDesiredState
+      summary: Обновить состояние устройства
+      description: |
+        Задаёт желаемое состояние устройства сразу по нескольким возможностям.
+        Для каждой изменившейся возможности создаётся команда; фактическое состояние
+        обновится, когда устройство подтвердит выполнение.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DesiredState'
+            examples:
+              lampOn:
+                summary: Включить лампу на 60 % яркости
+                value:
+                  switch: 'on'
+                  level: 60
+      responses:
+        '202':
+          description: Желаемое состояние сохранено, команды отправлены устройству
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateUpdateAccepted'
+              examples:
+                accepted:
+                  value:
+                    desired:
+                      switch: 'on'
+                      level: 60
+                    commands:
+                      - id: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e41
+                        capability: switch
+                        value: 'on'
+                        status: pending
+                      - id: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e42
+                        capability: level
+                        value: 60
+                        status: pending
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '422':
+          $ref: '#/components/responses/CapabilityNotSupported'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{deviceId}/commands:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    post:
+      tags: [commands]
+      operationId: sendCommand
+      summary: Отправить команду устройству
+      description: |
+        Принимает одну команду для одной возможности устройства. Команда проверяется
+        по возможностям типа устройства, сохраняется в статусе `pending` и публикуется
+        в брокер. Повторный запрос с тем же `Idempotency-Key` не создаёт новую команду,
+        а возвращает уже созданную.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Уникальный ключ запроса для безопасного повтора
+          schema:
+            type: string
+            maxLength: 64
+          example: 3f8b2c1a-heating-zone-1-20261025T102000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+            examples:
+              boilerOn:
+                summary: Включить котёл
+                value:
+                  capability: switch
+                  value: 'on'
+      responses:
+        '202':
+          description: Команда принята и отправлена устройству
+          headers:
+            Location:
+              description: Адрес для проверки статуса команды
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+              examples:
+                pending:
+                  value:
+                    id: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                    deviceId: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+                    capability: switch
+                    value: 'on'
+                    status: pending
+                    createdAt: '2026-10-25T10:20:00Z'
+                    completedAt: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '409':
+          description: Ключ идемпотентности уже использован с другим телом запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                keyReused:
+                  value:
+                    code: IDEMPOTENCY_KEY_REUSED
+                    message: Ключ уже использован для другой команды
+        '422':
+          $ref: '#/components/responses/CapabilityNotSupported'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{deviceId}/commands/{commandId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - name: commandId
+        in: path
+        required: true
+        description: Идентификатор команды
+        schema:
+          type: string
+          format: uuid
+        example: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+    get:
+      tags: [commands]
+      operationId: getCommand
+      summary: Получить статус команды
+      responses:
+        '200':
+          description: Команда найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+              examples:
+                done:
+                  summary: Устройство подтвердило выполнение
+                  value:
+                    id: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                    deviceId: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+                    capability: switch
+                    value: 'on'
+                    status: done
+                    createdAt: '2026-10-25T10:20:00Z'
+                    completedAt: '2026-10-25T10:20:02Z'
+                failed:
+                  summary: Устройство не ответило за 30 секунд
+                  value:
+                    id: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                    deviceId: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+                    capability: switch
+                    value: 'on'
+                    status: failed
+                    createdAt: '2026-10-25T10:20:00Z'
+                    completedAt: '2026-10-25T10:20:30Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Устройство или команда не найдены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                commandNotFound:
+                  value:
+                    code: COMMAND_NOT_FOUND
+                    message: Команда 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f не найдена
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Токен Keycloak; доступ к дому проверяет API Gateway
+
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: Идентификатор устройства
+      schema:
+        type: string
+        format: uuid
+      example: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+
+  schemas:
+    Capability:
+      type: string
+      description: Возможность устройства из описания его типа
+      enum: [switch, level, temperature, humidity, gate, motion]
+      example: switch
+
+    CapabilityValue:
+      description: Значение возможности - строка для switch и gate, число для level
+      oneOf:
+        - type: string
+          enum: ['on', 'off', open, close]
+        - type: number
+      example: 'on'
+
+    DeviceRegistration:
+      type: object
+      required: [houseId, serialNumber, pairingCode, typeCode, name]
+      properties:
+        houseId:
+          type: string
+          format: uuid
+        serialNumber:
+          type: string
+          maxLength: 64
+        pairingCode:
+          type: string
+          description: Код подключения с упаковки устройства
+          pattern: '^[0-9]{6}$'
+        typeCode:
+          type: string
+          description: Код типа устройства из каталога
+        moduleCode:
+          type: string
+          description: Модуль, в который входит устройство
+          enum: [heating, lighting, gates, video]
+        name:
+          type: string
+          maxLength: 100
+        room:
+          type: string
+          maxLength: 100
+
+    DeviceType:
+      type: object
+      required: [code, name, capabilities]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capability'
+
+    Device:
+      type: object
+      required: [id, houseId, type, serialNumber, name, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        houseId:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/DeviceType'
+        moduleCode:
+          type: string
+          nullable: true
+        serialNumber:
+          type: string
+        name:
+          type: string
+        room:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: ['on', 'off', offline]
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    DeviceState:
+      type: object
+      properties:
+        desired:
+          type: object
+          description: Желаемые значения возможностей
+          additionalProperties:
+            $ref: '#/components/schemas/CapabilityValue'
+        reported:
+          type: object
+          description: Фактические значения, сообщённые устройством
+          additionalProperties:
+            $ref: '#/components/schemas/CapabilityValue'
+        reportedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    DeviceDetails:
+      allOf:
+        - $ref: '#/components/schemas/Device'
+        - type: object
+          required: [state]
+          properties:
+            state:
+              $ref: '#/components/schemas/DeviceState'
+
+    MqttCredentials:
+      type: object
+      required: [host, port, clientId, username, password]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        clientId:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+          description: Выдаётся один раз, в БД хранится только хеш
+
+    DeviceRegistered:
+      type: object
+      required: [device, mqtt]
+      properties:
+        device:
+          $ref: '#/components/schemas/Device'
+        mqtt:
+          $ref: '#/components/schemas/MqttCredentials'
+
+    DesiredState:
+      type: object
+      description: Желаемые значения возможностей устройства
+      minProperties: 1
+      additionalProperties:
+        $ref: '#/components/schemas/CapabilityValue'
+
+    CommandRequest:
+      type: object
+      required: [capability, value]
+      properties:
+        capability:
+          $ref: '#/components/schemas/Capability'
+        value:
+          $ref: '#/components/schemas/CapabilityValue'
+
+    CommandSummary:
+      type: object
+      required: [id, capability, value, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        capability:
+          $ref: '#/components/schemas/Capability'
+        value:
+          $ref: '#/components/schemas/CapabilityValue'
+        status:
+          type: string
+          enum: [pending, done, failed]
+
+    Command:
+      allOf:
+        - $ref: '#/components/schemas/CommandSummary'
+        - type: object
+          required: [deviceId, createdAt]
+          properties:
+            deviceId:
+              type: string
+              format: uuid
+            createdAt:
+              type: string
+              format: date-time
+            completedAt:
+              type: string
+              format: date-time
+              nullable: true
+
+    StateUpdateAccepted:
+      type: object
+      required: [desired, commands]
+      properties:
+        desired:
+          $ref: '#/components/schemas/DesiredState'
+        commands:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommandSummary'
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            validation:
+              value:
+                code: VALIDATION_ERROR
+                message: 'Поле capability: недопустимое значение'
+    Unauthorized:
+      description: Нет токена или токен недействителен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            noToken:
+              value:
+                code: UNAUTHORIZED
+                message: Требуется авторизация
+    Forbidden:
+      description: У пользователя нет доступа к дому устройства
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            noAccess:
+              value:
+                code: FORBIDDEN
+                message: Нет доступа к дому
+    DeviceNotFound:
+      description: Устройство не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notFound:
+              value:
+                code: DEVICE_NOT_FOUND
+                message: Устройство 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21 не найдено
+    CapabilityNotSupported:
+      description: Тип устройства не поддерживает указанную возможность или значение
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notSupported:
+              value:
+                code: CAPABILITY_NOT_SUPPORTED
+                message: Тип temp-sensor-v2 не поддерживает возможность switch
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            internal:
+              value:
+                code: INTERNAL_ERROR
+                message: Внутренняя ошибка, повторите запрос позже
