@@ -1,0 +1,336 @@
+asyncapi: 3.0.0
+info:
+  title: Device Events
+  version: 1.0.0
+  description: |
+    Асинхронный обмен событиями устройств "Тёплого дома" через RabbitMQ.
+
+    - Device Service публикует команды для устройств и событие о подключении устройства.
+    - Device Gateway доставляет команды устройствам и публикует измерения, состояние
+      и подтверждения команд, полученные от устройств по MQTT.
+    - Telemetry, Heating, Scenario и Notification подписываются на нужные им события.
+
+    Все сообщения - JSON. Ключ маршрутизации topic exchange: `<houseId>.<deviceId>.<тип>`,
+    поэтому подписчик может выбрать события одного дома или одного типа.
+
+servers:
+  rabbitmq:
+    host: rabbitmq:5672
+    protocol: amqp
+    protocolVersion: 0.9.1
+    description: Брокер событий внутри системы
+
+defaultContentType: application/json
+
+channels:
+  deviceCommands:
+    address: device.commands
+    title: Команды устройствам
+    description: Команды, принятые Device Service и ожидающие доставки устройству
+    messages:
+      deviceCommand:
+        $ref: '#/components/messages/DeviceCommand'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: device.commands
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+
+  measurements:
+    address: device.measurements
+    title: Измерения
+    description: Показания датчиков
+    messages:
+      measurementReceived:
+        $ref: '#/components/messages/MeasurementReceived'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: device.measurements
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+
+  deviceEvents:
+    address: device.events
+    title: События устройств
+    description: Состояние устройств, результаты команд, подключение устройств
+    messages:
+      deviceStateReported:
+        $ref: '#/components/messages/DeviceStateReported'
+      commandFailed:
+        $ref: '#/components/messages/CommandFailed'
+      deviceConnected:
+        $ref: '#/components/messages/DeviceConnected'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: device.events
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+
+operations:
+  publishCommand:
+    action: send
+    channel:
+      $ref: '#/channels/deviceCommands'
+    title: Device Service публикует команду
+    bindings:
+      amqp:
+        deliveryMode: 2
+    messages:
+      - $ref: '#/channels/deviceCommands/messages/deviceCommand'
+
+  deliverCommand:
+    action: receive
+    channel:
+      $ref: '#/channels/deviceCommands'
+    title: Device Gateway получает команду и доставляет её устройству по MQTT
+    messages:
+      - $ref: '#/channels/deviceCommands/messages/deviceCommand'
+
+  publishMeasurement:
+    action: send
+    channel:
+      $ref: '#/channels/measurements'
+    title: Device Gateway публикует измерение
+    messages:
+      - $ref: '#/channels/measurements/messages/measurementReceived'
+
+  storeMeasurement:
+    action: receive
+    channel:
+      $ref: '#/channels/measurements'
+    title: Telemetry, Heating и Scenario получают измерения
+    messages:
+      - $ref: '#/channels/measurements/messages/measurementReceived'
+
+  publishDeviceEvent:
+    action: send
+    channel:
+      $ref: '#/channels/deviceEvents'
+    title: Device Gateway публикует состояние; Device Service - подключение и сбой команды
+    messages:
+      - $ref: '#/channels/deviceEvents/messages/deviceStateReported'
+      - $ref: '#/channels/deviceEvents/messages/commandFailed'
+      - $ref: '#/channels/deviceEvents/messages/deviceConnected'
+
+  handleDeviceEvent:
+    action: receive
+    channel:
+      $ref: '#/channels/deviceEvents'
+    title: Device Service, Scenario и Notification получают события устройств
+    messages:
+      - $ref: '#/channels/deviceEvents/messages/deviceStateReported'
+      - $ref: '#/channels/deviceEvents/messages/commandFailed'
+      - $ref: '#/channels/deviceEvents/messages/deviceConnected'
+
+components:
+  messages:
+    DeviceCommand:
+      name: DeviceCommand
+      title: Команда устройству
+      payload:
+        $ref: '#/components/schemas/DeviceCommandPayload'
+      examples:
+        - name: boilerOn
+          summary: Включить котёл
+          payload:
+            commandId: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+            houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+            deviceId: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+            capability: switch
+            value: 'on'
+            issuedAt: '2026-10-25T10:20:00Z'
+            expiresAt: '2026-10-25T10:20:30Z'
+
+    MeasurementReceived:
+      name: MeasurementReceived
+      title: Получено измерение
+      payload:
+        $ref: '#/components/schemas/MeasurementPayload'
+      examples:
+        - name: livingRoomTemperature
+          summary: Температура в гостиной
+          payload:
+            houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+            deviceId: 9d3c1a2e-7f4b-4d6a-8a51-2b7e0f9c4d11
+            metric: temperature
+            value: 17.6
+            unit: '°C'
+            measuredAt: '2026-10-25T10:19:58Z'
+
+    DeviceStateReported:
+      name: DeviceStateReported
+      title: Устройство сообщило состояние
+      payload:
+        $ref: '#/components/schemas/DeviceStatePayload'
+      examples:
+        - name: boilerOnAck
+          summary: Котёл включён, команда подтверждена
+          payload:
+            houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+            deviceId: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+            reported:
+              switch: 'on'
+            commandId: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+            reportedAt: '2026-10-25T10:20:02Z'
+
+    CommandFailed:
+      name: CommandFailed
+      title: Команда не выполнена
+      payload:
+        $ref: '#/components/schemas/CommandFailedPayload'
+      examples:
+        - name: timeout
+          summary: Устройство не ответило за 30 секунд
+          payload:
+            houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+            deviceId: 2f6a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b21
+            commandId: 7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+            reason: timeout
+            failedAt: '2026-10-25T10:20:30Z'
+
+    DeviceConnected:
+      name: DeviceConnected
+      title: Устройство подключено к дому
+      payload:
+        $ref: '#/components/schemas/DeviceConnectedPayload'
+      examples:
+        - name: sensorConnected
+          payload:
+            houseId: 5b0f6b6e-3c55-4c4e-9f0e-6a1d0c7f2a10
+            deviceId: 9d3c1a2e-7f4b-4d6a-8a51-2b7e0f9c4d11
+            typeCode: temp-sensor-v2
+            moduleCode: heating
+            capabilities: [temperature]
+            connectedAt: '2026-10-25T10:16:10Z'
+
+  schemas:
+    CapabilityValue:
+      description: Значение возможности - строка для switch и gate, число для level
+      oneOf:
+        - type: string
+          enum: ['on', 'off', open, close]
+        - type: number
+
+    DeviceCommandPayload:
+      type: object
+      required: [commandId, houseId, deviceId, capability, value, issuedAt, expiresAt]
+      properties:
+        commandId:
+          type: string
+          format: uuid
+        houseId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        capability:
+          type: string
+          description: Возможность устройства
+        value:
+          $ref: '#/components/schemas/CapabilityValue'
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: После этого момента команду не доставлять
+
+    MeasurementPayload:
+      type: object
+      required: [houseId, deviceId, metric, value, unit, measuredAt]
+      properties:
+        houseId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        metric:
+          type: string
+          enum: [temperature, humidity, motion]
+        value:
+          type: number
+        unit:
+          type: string
+        measuredAt:
+          type: string
+          format: date-time
+
+    DeviceStatePayload:
+      type: object
+      required: [houseId, deviceId, reported, reportedAt]
+      properties:
+        houseId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        reported:
+          type: object
+          description: Фактические значения возможностей
+          additionalProperties:
+            $ref: '#/components/schemas/CapabilityValue'
+        commandId:
+          type: string
+          format: uuid
+          description: Команда, которую подтверждает это состояние, если есть
+        reportedAt:
+          type: string
+          format: date-time
+
+    CommandFailedPayload:
+      type: object
+      required: [houseId, deviceId, commandId, reason, failedAt]
+      properties:
+        houseId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        commandId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          enum: [timeout, rejected_by_device, device_offline]
+        failedAt:
+          type: string
+          format: date-time
+
+    DeviceConnectedPayload:
+      type: object
+      required: [houseId, deviceId, typeCode, capabilities, connectedAt]
+      properties:
+        houseId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        typeCode:
+          type: string
+        moduleCode:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        connectedAt:
+          type: string
+          format: date-time

@@ -1,0 +1,51 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Device Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+Container(functions, "Сервисы функций дома", "Go", "Heating, Lighting, Gates, Scenario")
+Container(gateway, "Device Gateway", "Go", "Адаптеры протоколов устройств")
+ContainerDb(device_db, "Device DB", "PostgreSQL", "Устройства, типы, команды, состояние")
+ContainerQueue(q_commands, "Команды устройствам", "RabbitMQ exchange")
+ContainerQueue(q_events, "События устройств", "RabbitMQ exchange")
+
+Container_Boundary(device, "Device Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /devices, /devices/{id}/state, /devices/{id}/commands, /device-types; валидация запросов")
+
+    Component(catalog, "Каталог устройств", "Go", "Регистрация устройства и привязка к дому, типы устройств и их возможности")
+    Component(onboarding, "Подключение устройств", "Go", "Код подключения, учётные данные устройства, проверка устройства по запросу Gateway")
+    Component(commands, "Обработчик команд", "Go", "Проверяет команду по возможностям типа устройства, сохраняет желаемое состояние, отправляет команду")
+    Component(state, "Менеджер состояния", "Go", "Фактическое состояние, сверка с желаемым, подтверждения и тайм-ауты команд")
+
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Device DB")
+    Component(publisher, "Публикатор событий", "Go, AMQP-клиент", "Публикует команды, события о подключении устройств и о невыполненных командах")
+    Component(consumer, "Обработчик событий", "Go, AMQP-клиент", "Получает состояние и подтверждения команд")
+}
+
+Rel_D(api_gw, api, "Подключение и просмотр устройств", "REST/JSON")
+Rel_D(functions, api, "Команды устройствам", "REST/JSON")
+Rel_D(gateway, api, "Проверка устройства при подключении", "REST/JSON")
+
+Rel_D(api, catalog, "Устройства и типы")
+Rel_D(api, onboarding, "Подключение")
+Rel_D(api, commands, "Команды")
+
+Rel_D(catalog, repo, "Читает и пишет")
+Rel_D(onboarding, repo, "Читает и пишет")
+Rel_D(onboarding, publisher, "Устройство подключено")
+Rel_R(commands, catalog, "Возможности типа устройства")
+Rel_D(commands, repo, "Желаемое состояние, команда")
+Rel_D(commands, publisher, "Команда")
+
+Rel_U(consumer, state, "Состояние, подтверждение")
+Rel_D(state, repo, "Фактическое состояние, статус команды")
+Rel_R(state, publisher, "Команда не выполнена")
+
+Rel_D(repo, device_db, "", "SQL")
+Rel_D(publisher, q_commands, "Команды", "AMQP")
+Rel_D(publisher, q_events, "Устройство подключено, команда не выполнена", "AMQP")
+Rel_U(q_events, consumer, "Доставляет", "AMQP")
+
+SHOW_LEGEND()
+@enduml

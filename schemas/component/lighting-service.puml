@@ -1,0 +1,25 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Lighting Service
+
+Container(api_gw, "API Gateway", "Nginx / Kong", "Запросы пользователя")
+Container(device, "Device Service", "Go", "Команды устройствам")
+ContainerDb(lighting_db, "Lighting DB", "PostgreSQL", "Группы ламп, настройки")
+
+Container_Boundary(lighting, "Lighting Service") {
+    Component(api, "REST API", "Go, net/http", "Эндпойнты /houses/{id}/lighting: группы ламп, включение, яркость")
+    Component(control, "Управление освещением", "Go", "Группы ламп по комнатам, включение и выключение группы, яркость")
+    Component(device_client, "Клиент Device Service", "Go, HTTP-клиент", "Отправляет команды лампам")
+    Component(repo, "Репозиторий", "Go, pgx", "Доступ к Lighting DB")
+}
+
+Rel_D(api_gw, api, "Управление светом", "REST/JSON")
+Rel_D(api, control, "Команда, настройки групп")
+Rel_D(control, repo, "Читает и пишет")
+Rel_R(control, device_client, "Команды лампам группы")
+Rel_U(device_client, device, "Команда устройству", "REST/JSON")
+Rel_D(repo, lighting_db, "", "SQL")
+
+SHOW_LEGEND()
+@enduml

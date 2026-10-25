@@ -1,0 +1,97 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title Тёплый дом - диаграмма контейнеров (To-Be)
+
+Person(user, "Пользователь", "Владелец дома: подключает устройства, управляет ими, настраивает сценарии")
+
+System_Ext(video_ext, "Внешний видеосервис", "Хранение и трансляция видео с камер")
+System_Ext(notify_ext, "Провайдеры уведомлений", "Push, SMS, e-mail")
+System_Ext(devices, "Устройства умного дома", "Датчики, реле котлов, лампы, приводы ворот, камеры; свои и партнёрские")
+
+System_Boundary(warmhouse, "Тёплый дом") {
+
+    Boundary(entry, "Вход") {
+        Container(web, "Web-приложение", "SPA, React", "Интерфейс пользователя")
+        Container(identity, "Identity", "Keycloak", "Вход, выдача токенов (OIDC)")
+        Container(api_gw, "API Gateway", "Nginx / Kong", "Маршрутизация, проверка JWT, проверка доступа к дому")
+    }
+
+    Container(account, "Account & Home Service", "Go", "Пользователи, дома, роли в доме")
+    ContainerDb(account_db, "Account DB", "PostgreSQL")
+
+    Boundary(functions, "Функции дома") {
+        Container(heating, "Heating Service", "Go", "Целевая температура, режимы, расписания")
+        Container(lighting, "Lighting Service", "Go", "Включение, яркость, группы ламп")
+        Container(gates, "Gates Service", "Go", "Открытие, закрытие, журнал проездов")
+        Container(scenario, "Scenario Service", "Go", "Сценарии: триггер, условие, действие")
+        Container(video, "Video Service", "Go", "Камеры дома, ссылки на потоки и записи")
+        ContainerDb(functions_db, "БД сервисов функций", "PostgreSQL", "У каждого сервиса своя база")
+    }
+    Lay_R(heating, lighting)
+    Lay_R(lighting, gates)
+    Lay_D(heating, scenario)
+    Lay_R(scenario, video)
+    Lay_R(video, functions_db)
+
+    Container(telemetry, "Telemetry Service", "Go", "Хранение измерений, история и агрегаты")
+    ContainerDb(telemetry_db, "Telemetry DB", "TimescaleDB")
+    Container(notification, "Notification Service", "Go", "Уведомления о событиях в доме")
+
+    Boundary(broker, "Брокер событий (RabbitMQ)") {
+        ContainerQueue(q_commands, "Команды устройствам", "RabbitMQ exchange")
+        ContainerQueue(q_measurements, "Измерения", "RabbitMQ exchange")
+        ContainerQueue(q_events, "События устройств", "RabbitMQ exchange", "Состояние, подтверждения команд, подключение")
+    }
+
+    Boundary(platform, "Платформа устройств") {
+        Container(device, "Device Service", "Go", "Каталог устройств и типов, подключение, команды, желаемое и фактическое состояние")
+        ContainerDb(device_db, "Device DB", "PostgreSQL")
+        Container(gateway, "Device Gateway", "Go", "Адаптеры протоколов; переводит сообщения устройств во внутренние события и обратно")
+        ContainerQueue(mqtt, "MQTT-брокер", "EMQX", "Связь с устройствами")
+    }
+}
+
+' Запросы пользователя
+Rel_D(user, web, "Работает с системой", "HTTPS")
+Rel_R(web, identity, "Вход", "OIDC")
+Rel_D(web, api_gw, "Запросы к API", "HTTPS, REST/JSON")
+Rel_R(api_gw, identity, "Ключи JWT", "JWKS")
+Rel_L(web, video_ext, "Видеопоток", "HLS / WebRTC")
+
+Rel_D(api_gw, account, "Доступ к дому, профиль", "REST/JSON")
+Rel_D(api_gw, functions, "Настройки и управление", "REST/JSON")
+Rel_D(api_gw, telemetry, "Текущие значения, история", "REST/JSON")
+Rel_D(api_gw, device, "Подключение устройств", "REST/JSON")
+
+' Базы данных
+Rel_D(account, account_db, "", "SQL")
+Rel_D(telemetry, telemetry_db, "", "SQL")
+Rel_R(device, device_db, "", "SQL")
+
+' Поток команд: функция -> Device Service -> брокер -> Gateway -> устройство
+Rel_D(functions, device, "Команды устройствам", "REST/JSON")
+Rel_R(functions, telemetry, "История измерений (Scenario)", "REST/JSON")
+Rel_R(device, q_commands, "Публикует команду", "AMQP")
+Rel_U(device, q_events, "Устройство подключено, команда не выполнена", "AMQP")
+Rel_D(q_commands, gateway, "Доставляет команду", "AMQP")
+BiRel_D(gateway, mqtt, "Сообщения устройств / команды", "MQTT")
+BiRel_D(mqtt, devices, "Показания и состояние / команды", "MQTT over TLS")
+
+' Поток измерений: устройство -> Gateway -> брокер -> подписчики
+Rel_U(gateway, q_measurements, "Публикует измерения", "AMQP")
+Rel_U(q_measurements, telemetry, "Измерения", "AMQP")
+Rel_U(q_measurements, functions, "Измерения (Heating, Scenario)", "AMQP")
+
+' Поток событий устройств
+Rel_U(gateway, q_events, "Публикует состояние и подтверждения", "AMQP")
+Rel_U(q_events, device, "Фактическое состояние", "AMQP")
+Rel_U(q_events, functions, "События (Scenario)", "AMQP")
+Rel_U(q_events, notification, "События для уведомлений", "AMQP")
+Rel_D(notification, notify_ext, "Уведомления", "HTTPS")
+Rel_U(notification, account, "Получатели и контакты", "REST/JSON")
+
+Rel_L(video, video_ext, "Камеры, потоки", "REST API")
+
+SHOW_LEGEND()
+@enduml

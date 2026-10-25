@@ -1,0 +1,25 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title Тёплый дом - диаграмма контекста (As-Is)
+
+AddRelTag("declared", $lineStyle = DashedLine(), $textColor = "gray", $lineColor = "gray", $legendText = "заявлено, в коде нет")
+
+Person(user, "Пользователь", "Владелец дома, управляет отоплением и смотрит температуру")
+Person(installer, "Специалист по подключению", "Сотрудник компании, выезжает на каждую установку")
+
+System(warmhouse, "Тёплый дом", "Монолит на Go с PostgreSQL: учёт датчиков, просмотр температуры, запись значения и статуса")
+
+System_Ext(sensor, "Датчик температуры", "Установлен в доме, отдаёт текущую температуру по запросу сервера")
+System_Ext(heating, "Модуль управления отоплением", "Реле котла в доме, 100 подключённых модулей")
+
+Rel(user, warmhouse, "Смотрит температуру, включает и выключает отопление", "HTTP, REST/JSON, веб-клиент")
+Rel(installer, warmhouse, "Регистрирует датчики", "HTTP, REST/JSON")
+Rel(installer, sensor, "Устанавливает и подключает на объекте")
+Rel(installer, heating, "Устанавливает и подключает на объекте")
+
+Rel(warmhouse, sensor, "Запрашивает текущую температуру при каждом чтении", "HTTP GET /temperature/{id}, JSON, синхронно")
+Rel(warmhouse, heating, "Команды включения и выключения (по условию кейса, в коде не реализованы)", $tags = "declared")
+
+SHOW_LEGEND()
+@enduml

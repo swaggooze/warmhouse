@@ -1,0 +1,42 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Тёплый дом - диаграмма компонентов Device Gateway
+
+System_Ext(devices, "Устройства умного дома", "Свои и партнёрские, разные протоколы")
+ContainerQueue(mqtt, "MQTT-брокер", "EMQX", "Связь с устройствами")
+Container(device, "Device Service", "Go", "Каталог устройств, учётные данные")
+ContainerQueue(q_commands, "Команды устройствам", "RabbitMQ exchange")
+ContainerQueue(q_measurements, "Измерения", "RabbitMQ exchange")
+ContainerQueue(q_events, "События устройств", "RabbitMQ exchange")
+
+Container_Boundary(gateway, "Device Gateway") {
+    Component(auth, "Аутентификация устройств", "Go, HTTP", "Проверяет учётные данные устройства при подключении к MQTT; кэширует ответы Device Service")
+    Component(mqtt_client, "MQTT-клиент", "Go, MQTT-клиент", "Подписка на топики устройств, публикация команд")
+    Component(router, "Маршрутизатор сообщений", "Go", "Определяет тип устройства и протокол, выбирает адаптер")
+    Component(adapters, "Адаптеры протоколов", "Go, плагины", "Переводят формат производителя во внутренний и обратно; новый протокол - новый адаптер")
+    Component(cmd_consumer, "Обработчик команд", "Go, AMQP-клиент", "Получает команды для устройств")
+    Component(publisher, "Публикатор событий", "Go, AMQP-клиент", "Публикует измерения, состояние и подтверждения команд")
+    Component(device_client, "Клиент Device Service", "Go, HTTP-клиент", "Тип устройства и учётные данные по идентификатору")
+}
+
+BiRel_D(devices, mqtt, "Показания и состояние / команды", "MQTT over TLS")
+Rel_D(mqtt, auth, "Проверка устройства при подключении", "HTTP, хук аутентификации")
+BiRel_D(mqtt, mqtt_client, "Сообщения устройств / команды", "MQTT")
+
+Rel_D(mqtt_client, router, "Сообщение устройства")
+Rel_R(router, adapters, "Сообщение в формате производителя")
+Rel_D(adapters, publisher, "Измерение, состояние, подтверждение")
+Rel_D(router, device_client, "Тип и протокол устройства")
+Rel_D(auth, device_client, "Учётные данные")
+
+Rel_U(q_commands, cmd_consumer, "Доставляет команду", "AMQP")
+Rel_U(cmd_consumer, adapters, "Команда во внутреннем формате")
+Rel_U(adapters, mqtt_client, "Команда в формате производителя")
+
+Rel_D(publisher, q_measurements, "Измерения", "AMQP")
+Rel_D(publisher, q_events, "Состояние, подтверждения", "AMQP")
+Rel_D(device_client, device, "Данные устройства", "REST/JSON")
+
+SHOW_LEGEND()
+@enduml

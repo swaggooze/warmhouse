@@ -3,3 +3,5 @@
 /.idea/modules.xml
 /.idea/vcs.xml
 /.idea/warmhouse.iml
+/.idea/go.imports.xml
+/apps/docker-compose.override.yml
