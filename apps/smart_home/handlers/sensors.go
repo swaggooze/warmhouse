@@ -18,13 +18,15 @@ import (
 type SensorHandler struct {
 	DB                 *db.DB
 	TemperatureService *services.TemperatureService
+	DeviceService      *services.DeviceService
 }
 
 // NewSensorHandler creates a new SensorHandler
-func NewSensorHandler(db *db.DB, temperatureService *services.TemperatureService) *SensorHandler {
+func NewSensorHandler(db *db.DB, temperatureService *services.TemperatureService, deviceService *services.DeviceService) *SensorHandler {
 	return &SensorHandler{
 		DB:                 db,
 		TemperatureService: temperatureService,
+		DeviceService:      deviceService,
 	}
 }
 
@@ -142,6 +144,15 @@ func (h *SensorHandler) CreateSensor(c *gin.Context) {
 		return
 	}
 
+	// Register the sensor in device-service; a failure there must not break the monolith
+	if h.DeviceService.Enabled() {
+		if err := h.DeviceService.RegisterSensor(sensor); err != nil {
+			log.Printf("Failed to register sensor %d in device-service: %v", sensor.ID, err)
+		} else {
+			log.Printf("Sensor %d registered in device-service", sensor.ID)
+		}
+	}
+
 	c.JSON(http.StatusCreated, sensor)
 }
 
@@ -207,6 +218,13 @@ func (h *SensorHandler) UpdateSensorValue(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Forward the on/off status to the device as a command; a failure there must not break the monolith
+	if h.DeviceService.Enabled() {
+		if err := h.DeviceService.SwitchSensor(id, request.Status == "active"); err != nil {
+			log.Printf("Failed to send command for sensor %d to device-service: %v", id, err)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Sensor value updated successfully"})
